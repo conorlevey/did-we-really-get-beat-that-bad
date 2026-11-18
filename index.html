@@ -11,8 +11,13 @@
 <label for="type-filter">Matchup type<select id="type-filter"><option value="">All matchups</option><option value="G6">G6 vs G6</option><option value="P4">P4 vs P4</option></select></label>
 <label for="conference-filter">Conference<select id="conference-filter"><option value="">Any conferences</option><option value="same">Any intra-conference games</option></select></label>
 <label for="conference-match">Conference match<select id="conference-match" disabled><option value="both">Both teams</option><option value="either">At least one team</option><option value="one">Exactly one team (out-of-conference)</option></select></label>
+<label for="week-start">From week<input id="week-start" type="number" min="1" step="1" inputmode="numeric" aria-describedby="week-hint week-error"></label>
+<label for="week-end">Through week<input id="week-end" type="number" min="1" step="1" inputmode="numeric" aria-describedby="week-hint week-error"></label>
 <button id="reset-filters" type="button">Clear filters</button>
 </div>
+<style>.filters input[type="number"]{font:inherit;font-size:16px;width:110px;max-width:100%;padding:8px 10px;border:1px solid #c5ced5;background:#fff;border-radius:5px;color:#182633}.filters input[aria-invalid="true"]{border-color:#a12b38}.week-hint{margin-top:9px;font-size:13px}.week-error{margin-top:6px;color:#a12b38;font-size:14px}@media(max-width:650px){.filters input[type="number"]{width:100%}}</style>
+<p id="week-hint" class="week-hint">Use the same number in both boxes for a single week. Leave a box blank for no limit. Both ends of a range are included.</p>
+<p id="week-error" class="week-error" role="alert" hidden></p>
 <div class="toolbar"><div class="zoom"><button id="fit" type="button">Fit shown games</button><label for="zoom">Zoom</label><input id="zoom" type="range" min="0" max="100" value="0"><output id="zoom-value">Fit</output></div><span id="count" class="count" aria-live="polite">619 of 619 games</span></div>
 <div id="detail" class="detail" aria-live="polite">Hover or tap a bar for its matchup, week, and estimated value.</div>
 <div class="chart" role="group" aria-label="Game-by-game college football chart"><div class="axis"><svg id="axis" aria-label="Net success rate axis"></svg></div><div id="viewport" class="viewport"><svg id="plot" role="img" aria-label="Game bars with team logos, ranked from lowest to highest estimated net success rate"></svg></div><div id="empty" class="empty" hidden>No games match these filters. Try another team or clear the filters.</div></div>
@@ -25,6 +30,10 @@ const DATA={"games": [{"week": 1, "team": "TROY", "value": -0.176, "x": 192, "ti
 const games=DATA.games,logos=DATA.logos,teams=DATA.teams,NS='http://www.w3.org/2000/svg';
 const viewport=document.getElementById('viewport'),plot=document.getElementById('plot'),axis=document.getElementById('axis'),zoom=document.getElementById('zoom'),zoomValue=document.getElementById('zoom-value'),detail=document.getElementById('detail'),tooltip=document.getElementById('tooltip');
 const teamFilter=document.getElementById('team-filter'),typeFilter=document.getElementById('type-filter'),conferenceFilter=document.getElementById('conference-filter'),conferenceMatch=document.getElementById('conference-match'),countLabel=document.getElementById('count'),empty=document.getElementById('empty');
+const weekStart=document.getElementById('week-start'),weekEnd=document.getElementById('week-end'),weekError=document.getElementById('week-error');
+const firstWeek=Math.min(...games.map(g=>g.week)),lastWeek=Math.max(...games.map(g=>g.week));
+for(const control of [weekStart,weekEnd]){control.min=firstWeek;control.max=lastWeek;}
+weekStart.placeholder=String(firstWeek);weekEnd.placeholder=String(lastWeek);
 let visibleGames=games;
 for(const id of Object.keys(teams).sort((a,b)=>teams[a].name.localeCompare(teams[b].name))){const option=document.createElement('option');option.value=id;option.textContent=teams[id].name;teamFilter.appendChild(option)}
 for(const conf of [...new Set(Object.values(teams).map(t=>t.conference))].filter(c=>c!=='Independent').sort()){const option=document.createElement('option');option.value=conf;option.textContent=conf;conferenceFilter.appendChild(option)}
@@ -42,7 +51,9 @@ function draw(){
   for(const [team,up,end] of [[g.team,g.value>=0,tip],[g.opponent,g.value<0,zero]]){const asset=logos[team],maxWidth=Math.min(36,pitch*.9),factor=Math.min(maxWidth/asset.width,40/asset.height),w=asset.width*factor,h=asset.height*factor;node('image',{href:asset.src,x:x-w/2,y:up?end-6-h:end+6,width:w,height:h},group)}
  }
  zoomValue.value=ratio===0?'Fit':`${(pitch/fit).toFixed(1)}×`;
- countLabel.textContent=`${visibleGames.length} of ${games.length} games · Shared axis`;
+ const rangeStart=weekStart.value===''?firstWeek:Number(weekStart.value),rangeEnd=weekEnd.value===''?lastWeek:Number(weekEnd.value);
+ const rangeLabel=weekError.hidden&&(weekStart.value!==''||weekEnd.value!=='')?(rangeStart===rangeEnd?` · Week ${rangeStart}`:` · Weeks ${rangeStart}–${rangeEnd}`):'';
+ countLabel.textContent=`${visibleGames.length} of ${games.length} games · Shared axis${rangeLabel}`;
  empty.hidden=visibleGames.length!==0;
  plot.setAttribute('aria-label',`${visibleGames.length} game bars, sorted lowest to highest estimated net success rate`);
 }
@@ -59,16 +70,29 @@ function matchesConference(a,b){
  const hits=Number(a.conference===conference)+Number(b.conference===conference);
  return conferenceMatch.value==='one'?hits===1:conferenceMatch.value==='either'?hits>=1:hits===2;
 }
+function readWeekRange(){
+ const start=weekStart.value===''?firstWeek:Number(weekStart.value),end=weekEnd.value===''?lastWeek:Number(weekEnd.value);
+ const badStart=Boolean(weekStart.validity?.badInput)||!Number.isInteger(start)||start<firstWeek||start>lastWeek;
+ const badEnd=Boolean(weekEnd.validity?.badInput)||!Number.isInteger(end)||end<firstWeek||end>lastWeek;
+ const reversed=!badStart&&!badEnd&&start>end;
+ weekStart.setAttribute('aria-invalid',String(badStart||reversed));weekEnd.setAttribute('aria-invalid',String(badEnd||reversed));
+ const message=badStart||badEnd?`Enter whole week numbers from ${firstWeek} to ${lastWeek}.`:reversed?'The start week must be no later than the end week.':'';
+ weekError.textContent=message;weekError.hidden=!message;
+ return {start,end,valid:!message};
+}
 function applyFilters(){
  conferenceMatch.disabled=!conferenceFilter.value||conferenceFilter.value==='same';
- visibleGames=games.filter(g=>{const a=teams[g.team],b=teams[g.opponent];return (!teamFilter.value||g.team===teamFilter.value||g.opponent===teamFilter.value)&&(!typeFilter.value||(a.tier===typeFilter.value&&b.tier===typeFilter.value))&&matchesConference(a,b) });
+ const range=readWeekRange();
+ visibleGames=range.valid?games.filter(g=>{const a=teams[g.team],b=teams[g.opponent];return g.week>=range.start&&g.week<=range.end&&(!teamFilter.value||g.team===teamFilter.value||g.opponent===teamFilter.value)&&(!typeFilter.value||(a.tier===typeFilter.value&&b.tier===typeFilter.value))&&matchesConference(a,b) }):[];
  pinned=null;tooltip.style.display='none';viewport.scrollLeft=0;
  detail.textContent=visibleGames.length?'Hover or tap a bar for its matchup, week, and estimated value.':'No matching games.';
  const csv=[['overall_rank','week','team','opponent','team_conference','opponent_conference','estimated_net_success_rate'],...visibleGames.map(g=>[g.rank,g.week,teams[g.team].name,teams[g.opponent].name,teams[g.team].conference,teams[g.opponent].conference,g.value])].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\n');
  document.getElementById('csv-export').href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
  draw();
+ empty.textContent=range.valid?'No games match these filters. Try another team, week range, or clear the filters.':'Adjust the week range to show games.';
 }
 for(const control of [teamFilter,typeFilter,conferenceFilter,conferenceMatch])control.addEventListener('change',applyFilters);
-document.getElementById('reset-filters').addEventListener('click',()=>{teamFilter.value='';typeFilter.value='';conferenceFilter.value='';conferenceMatch.value='both';applyFilters()});
+for(const control of [weekStart,weekEnd])control.addEventListener('input',applyFilters);
+document.getElementById('reset-filters').addEventListener('click',()=>{teamFilter.value='';typeFilter.value='';conferenceFilter.value='';conferenceMatch.value='both';weekStart.value='';weekEnd.value='';applyFilters()});
 new ResizeObserver(draw).observe(viewport);applyFilters();
 </script></body></html>
