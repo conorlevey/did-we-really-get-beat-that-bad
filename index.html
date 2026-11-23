@@ -20,8 +20,10 @@
 <p id="week-error" class="week-error" role="alert" hidden></p>
 <div class="toolbar"><div class="zoom"><button id="fit" type="button">Fit shown games</button><label for="zoom">Zoom</label><input id="zoom" type="range" min="0" max="100" value="0"><output id="zoom-value">Fit</output></div><span id="count" class="count" aria-live="polite">685 of 685 games</span></div>
 <div id="detail" class="detail" aria-live="polite">Hover or tap a bar for its matchup, week, and estimated value.</div>
+<style>.average-summary{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0;font-size:14px;color:#182633;font-variant-numeric:tabular-nums}.average-swatch{width:30px;border-top:1px solid #147682;flex:none}</style>
+<div class="average-summary" aria-live="polite"><span class="average-swatch" aria-hidden="true"></span><span id="winning-average">Winning-team average: —</span></div>
 <div class="chart" role="group" aria-label="Game-by-game college football chart"><div class="axis"><svg id="axis" aria-label="Net success rate axis"></svg></div><div id="viewport" class="viewport"><svg id="plot" role="img" aria-label="Game bars with team logos, ranked from lowest to highest estimated net success rate"></svg></div><div id="empty" class="empty" hidden>No games match these filters. Try another team or clear the filters.</div></div>
-<p class="hint">≈ Values estimated from bar heights in the uploaded weekly charts. Close values may be indistinguishable. Logos cropped from the source images.<br>Zoom in to read the logos, then scroll sideways. Each bar retains the source team’s net success rate; the opponent logo sits across the zero line.</p>
+<p class="hint">≈ Values estimated from bar heights in the uploaded weekly charts. Close values may be indistinguishable. Logos cropped from the source images.<br>The solid teal line is the average winning-team margin across the games shown, including winners with a negative margin. It updates with your filters.<br>Zoom in to read the logos, then scroll sideways. Each bar retains the source team’s net success rate; the opponent logo sits across the zero line.</p>
 <div class="downloads"><a href="all-games-weeks-1-12.png" download>All games: full-size PNG</a><a href="all-games-weeks-1-12.svg" download>All games: scalable SVG</a><a id="csv-export" href="all-games-estimated-values.csv" download="filtered-game-values.csv">Shown games: estimated values (CSV)</a></div>
 <details><summary>Conference and group definitions</summary><p>Uses 2026 football membership, with your comparison rules: <strong>Notre Dame is included in ACC and P4; UConn is G6 and remains independent.</strong> P4 includes ACC, Big Ten, Big 12 and SEC. G6 includes American, Conference USA, MAC, Mountain West, Pac-12 and Sun Belt, plus UConn. For a named conference, choose both teams, at least one team, or exactly one team. Exactly one team shows out-of-conference games; combine it with P4 vs P4 or G6 vs G6 to restrict the opponent’s group. “Any intra-conference games” requires both teams to share a conference; independents do not form a conference. All selected filters apply together.</p><p>Membership references: <a href="https://pac-12.com/news/2026/2/9/general-the-new-pac-12-announces-its-2026-football-schedule.aspx">Pac-12</a>, <a href="https://themw.com/news/2026/6/4/mw-announces-2026-football-schedule.aspx">Mountain West</a>, <a href="https://sunbeltsports.org/news/2026/7/1/general-sun-belt-officially-welcomes-louisiana-tech.aspx">Sun Belt</a>, <a href="https://conferenceusa.com/sports/2023/6/22/members_2025.aspx">Conference USA</a>, <a href="https://getsomemaction.com/standings.aspx?path=football">MAC</a>, <a href="https://theamerican.org/standings.aspx?path=football">American</a>.</p></details>
 </main><div id="tooltip" class="tooltip" role="tooltip"></div>
@@ -31,13 +33,14 @@ const games=DATA.games,logos=DATA.logos,teams=DATA.teams,NS='http://www.w3.org/2
 const viewport=document.getElementById('viewport'),plot=document.getElementById('plot'),axis=document.getElementById('axis'),zoom=document.getElementById('zoom'),zoomValue=document.getElementById('zoom-value'),detail=document.getElementById('detail'),tooltip=document.getElementById('tooltip');
 const teamFilter=document.getElementById('team-filter'),typeFilter=document.getElementById('type-filter'),conferenceFilter=document.getElementById('conference-filter'),conferenceMatch=document.getElementById('conference-match'),countLabel=document.getElementById('count'),empty=document.getElementById('empty');
 const weekStart=document.getElementById('week-start'),weekEnd=document.getElementById('week-end'),weekError=document.getElementById('week-error');
+const winningAverage=document.getElementById('winning-average');
 const firstWeek=Math.min(...games.map(g=>g.week)),lastWeek=Math.max(...games.map(g=>g.week));
 for(const control of [weekStart,weekEnd]){control.min=firstWeek;control.max=lastWeek;}
 weekStart.placeholder=String(firstWeek);weekEnd.placeholder=String(lastWeek);
 let visibleGames=games;
 for(const id of Object.keys(teams).sort((a,b)=>teams[a].name.localeCompare(teams[b].name))){const option=document.createElement('option');option.value=id;option.textContent=teams[id].name;teamFilter.appendChild(option)}
 for(const conf of [...new Set(Object.values(teams).map(t=>t.conference))].filter(c=>c!=='Independent').sort()){const option=document.createElement('option');option.value=conf;option.textContent=conf;conferenceFilter.appendChild(option)}
-const height=660,zero=510,scale=650;let pitch=3,pinned=null;
+const height=660,zero=510,scale=650;let pitch=3,pinned=null,shownAverage=null;
 const y=v=>zero-v*scale;
 function node(tag,attrs,parent){const el=document.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);parent.appendChild(el);return el}
 function draw(){
@@ -45,11 +48,20 @@ function draw(){
  plot.replaceChildren();plot.setAttribute('width',width);plot.setAttribute('height',height);plot.setAttribute('viewBox',`0 0 ${width} ${height}`);
  axis.replaceChildren();axis.setAttribute('width',65);axis.setAttribute('height',height);axis.setAttribute('viewBox',`0 0 65 ${height}`);
  for(let i=-4;i<=13;i++){const v=i*.05;node('line',{x1:0,x2:width,y1:y(v),y2:y(v),stroke:i===0?'#a2adb7':'#e0e5e9','stroke-width':i===0?1.5:1},plot);const txt=node('text',{x:53,y:y(v)+4,'text-anchor':'end',fill:'#64717d','font-size':12,'font-family':'Arial'},axis);txt.textContent=i===0?'0.00':(v>0?'+':'')+v.toFixed(2)}
+ if(visibleGames.length){
+  const average=visibleGames.reduce((sum,g)=>sum+g.value,0)/visibleGames.length;
+  shownAverage=average;
+  const label=`Winning-team average (shown games): ≈ ${average>=0?'+':''}${average.toFixed(3)}`;
+  winningAverage.textContent=label;
+  const reference=node('g',{'data-winning-average':average,'aria-label':label,'pointer-events':'none'},plot);
+  node('line',{'data-average-line':'true',x1:0,x2:width,y1:y(average),y2:y(average),stroke:'#147682','stroke-width':1},reference);
+ }else{shownAverage=null;winningAverage.textContent='Winning-team average: — (no games shown)';}
  for(let i=0;i<visibleGames.length;i++){const g=visibleGames[i],x=(i+.5)*pitch,tip=y(g.value),barwidth=Math.min(31,Math.max(1,pitch*.64)),color=`rgb(${g.color.join(',')})`;
   const group=node('g',{'data-rank':g.rank},plot);const title=node('title',{},group);title.textContent=`Week ${g.week}: ${teams[g.team].name} vs ${teams[g.opponent].name}; estimated NSR ${g.value>=0?'+':''}${g.value.toFixed(3)}`;
   node('rect',{x:x-barwidth/2,y:Math.min(tip,zero),width:barwidth,height:Math.max(1,Math.abs(tip-zero)),fill:color},group);
   for(const [team,up,end] of [[g.team,g.value>=0,tip],[g.opponent,g.value<0,zero]]){const asset=logos[team],maxWidth=Math.min(36,pitch*.9),factor=Math.min(maxWidth/asset.width,40/asset.height),w=asset.width*factor,h=asset.height*factor;node('image',{href:asset.src,x:x-w/2,y:up?end-6-h:end+6,width:w,height:h},group)}
  }
+
  zoomValue.value=ratio===0?'Fit':`${(pitch/fit).toFixed(1)}×`;
  const rangeStart=weekStart.value===''?firstWeek:Number(weekStart.value),rangeEnd=weekEnd.value===''?lastWeek:Number(weekEnd.value);
  const rangeLabel=weekError.hidden&&(weekStart.value!==''||weekEnd.value!=='')?(rangeStart===rangeEnd?` · Week ${rangeStart}`:` · Weeks ${rangeStart}–${rangeEnd}`):'';
@@ -58,9 +70,25 @@ function draw(){
  plot.setAttribute('aria-label',`${visibleGames.length} game bars, sorted lowest to highest estimated net success rate`);
 }
 function show(index,event){if(!visibleGames.length)return;const g=visibleGames[Math.max(0,Math.min(visibleGames.length-1,index))],value=(g.value>=0?'+':'')+g.value.toFixed(3),matchup=`${teams[g.team].name} vs ${teams[g.opponent].name}`,text=`Overall rank #${g.rank} · Week ${g.week} · ${matchup} · ≈ ${value}`;detail.textContent=text;if(event){tooltip.innerHTML=`<strong>${matchup}</strong><br>Week ${g.week} · Overall rank ${g.rank} / ${games.length}<br>${teams[g.team].conference} / ${teams[g.opponent].conference}<br>Estimated net success rate: ≈ ${value}`;tooltip.style.display='block';tooltip.style.left=Math.max(8,Math.min(window.innerWidth-tooltip.offsetWidth-10,event.clientX+14))+'px';tooltip.style.top=Math.max(10,Math.min(window.innerHeight-120,event.clientY-120))+'px'}}
-plot.addEventListener('pointermove',e=>{if(pinned===null){const r=plot.getBoundingClientRect();show(Math.floor((e.clientX-r.left)/pitch),e)}});
+function overAverageLine(event){
+ if(shownAverage===null||event.target?.closest?.('[data-rank]'))return false;
+ const bounds=plot.getBoundingClientRect();
+ // A small hover tolerance leaves the visible line one pixel wide.
+ const screenY=bounds.top+y(shownAverage)*bounds.height/height;
+ return Math.abs(event.clientY-screenY)<=5;
+}
+function showAverage(event){
+ if(shownAverage===null)return;
+ const value=(shownAverage>=0?'+':'')+shownAverage.toFixed(3);
+ detail.textContent=`Average winning-team margin: ≈ ${value} across ${visibleGames.length} shown games.`;
+ tooltip.innerHTML=`<strong>Average winning-team margin</strong><br>≈ ${value}<br>Across ${visibleGames.length} shown ${visibleGames.length===1?'game':'games'}`;
+ tooltip.style.display='block';
+ tooltip.style.left=Math.max(8,Math.min(window.innerWidth-tooltip.offsetWidth-10,event.clientX+14))+'px';
+ tooltip.style.top=Math.max(10,Math.min(window.innerHeight-120,event.clientY-120))+'px';
+}
+plot.addEventListener('pointermove',e=>{if(overAverageLine(e)){showAverage(e);return;}const r=plot.getBoundingClientRect();show(pinned===null?Math.floor((e.clientX-r.left)/pitch):pinned,e)});
 plot.addEventListener('pointerleave',()=>{tooltip.style.display='none'});
-plot.addEventListener('click',e=>{const r=plot.getBoundingClientRect();const i=Math.floor((e.clientX-r.left)/pitch);pinned=pinned===i?null:i;show(i,e)});
+plot.addEventListener('click',e=>{if(overAverageLine(e)){showAverage(e);return;}const r=plot.getBoundingClientRect();const i=Math.floor((e.clientX-r.left)/pitch);pinned=pinned===i?null:i;show(i,e)});
 zoom.addEventListener('input',()=>{const fraction=(viewport.scrollLeft+viewport.clientWidth/2)/Math.max(1,pitch*visibleGames.length);draw();viewport.scrollLeft=fraction*pitch*visibleGames.length-viewport.clientWidth/2;tooltip.style.display='none'});
 document.getElementById('fit').addEventListener('click',()=>{zoom.value=0;draw();viewport.scrollLeft=0;pinned=null;tooltip.style.display='none'});
 function matchesConference(a,b){
